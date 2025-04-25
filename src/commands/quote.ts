@@ -21,7 +21,21 @@ export const quote = () => async (ctx: Context) => {
     const chatId = ctx.chat?.id;
     if (!chatId) return;
 
-    await ctx.telegram.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+    // Create the inline keyboard with a "Share" button
+    const shareButton = {
+      text: 'Share this Quote',
+      url: `https://t.me/share/url?url=${encodeURIComponent(message)}&text=Check%20out%20this%20quote%20from%20@EduhubKMR_bot`
+    };
+
+    // Send the message with the share button
+    await ctx.telegram.sendMessage(chatId, message, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: shareButton.text, url: shareButton.url }],
+        ],
+      },
+    });
   } catch (err) {
     console.error('Failed to fetch quote:', err);
     const chatId = ctx.chat?.id;
