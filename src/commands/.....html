@@ -1,0 +1,487 @@
+import { Context } from 'telegraf';
+
+const warnings: Record<string, number> = {}; // Chat-specific user warnings
+
+const isAdmin = async (ctx: Context) => {
+  const chatId = ctx.chat?.id;
+  const userId = ctx.from?.id;
+  if (!chatId || !userId) return false;
+
+  const admins = await ctx.telegram.getChatAdministrators(chatId);
+  return admins.some((admin) => admin.user.id === userId);
+};
+
+const getTargetUserId = async (ctx: Context): Promise<number | null> => {
+  const replyMessage = ctx.message?.reply_to_message;
+  if (replyMessage?.from?.id) {
+    return replyMessage.from.id;
+  }
+
+  const username = ctx.message?.text?.split(' ')[1]?.replace('@', '');
+  if (!username) return null;
+
+  try {
+    const members = await ctx.telegram.getChatAdministrators(ctx.chat!.id);
+    const user = members.find((m) => m.user.username?.toLowerCase() === username.toLowerCase());
+    return user?.user.id || null;
+  } catch {
+    return null;
+  }
+};
+
+const getUserTag = (ctx: Context) => {
+  const replyMessage = ctx.message?.reply_to_message;
+  return replyMessage?.from?.username ? `@${replyMessage.from.username}` : 'User';
+};
+
+// ========== Moderation Commands ==========
+export const banUser = () => async (ctx: Context) => {
+  if (!await isAdmin(ctx)) return ctx.reply('❌ Only admins can ban users.');
+
+  const userId = await getTargetUserId(ctx);
+  if (!userId) return ctx.reply('❌ User not found.');
+
+  try {
+    await ctx.telegram.kickChatMember(ctx.chat!.id, userId);
+    await ctx.reply(`✅ ${getUserTag(ctx)} has been *banned*.`, { parse_mode: 'Markdown' });
+  } catch {
+    ctx.reply('❌ Failed to ban user.');
+  }
+};
+
+export const unbanUser = () => async (ctx: Context) => {
+  if (!await isAdmin(ctx)) return ctx.reply('❌ Only admins can unban users.');
+
+  const userId = await getTargetUserId(ctx);
+  if (!userId) return ctx.reply('❌ User not found.');
+
+  try {
+    await ctx.telegram.unbanChatMember(ctx.chat!.id, userId);
+    await ctx.reply(`✅ ${getUserTag(ctx)} has been *unbanned*.`, { parse_mode: 'Markdown' });
+  } catch {
+    ctx.reply('❌ Failed to unban user.');
+  }
+};
+
+export const kickUser = () => async (ctx: Context) => {
+  if (!await isAdmin(ctx)) return ctx.reply('❌ Only admins can kick users.');
+
+  const userId = await getTargetUserId(ctx);
+  if (!userId) return ctx.reply('❌ User not found.');
+
+  try {
+    await ctx.telegram.kickChatMember(ctx.chat!.id, userId);
+    await ctx.telegram.unbanChatMember(ctx.chat!.id, userId); // Ensure they can rejoin
+    await ctx.reply(`👢 ${getUserTag(ctx)} was *kicked*.`, { parse_mode: 'Markdown' });
+  } catch {
+    ctx.reply('❌ Failed to kick user.');
+  }
+};
+
+export const muteUser = () => async (ctx: Context) => {
+  if (!await isAdmin(ctx)) return ctx.reply('❌ Only admins can mute users.');
+
+  const userId = await getTargetUserId(ctx);
+  if (!userId) return ctx.reply('❌ User not found.');
+
+  try {
+    await ctx.telegram.restrictChatMember(ctx.chat!.id, userId, { permissions: { can_send_messages: false } });
+    await ctx.reply(`🔇 ${getUserTag(ctx)} has been *muted*.`, { parse_mode: 'Markdown' });
+  } catch {
+    ctx.reply('❌ Failed to mute user.');
+  }
+};
+
+export const unmuteUser = () => async (ctx: Context) => {
+  if (!await isAdmin(ctx)) return ctx.reply('❌ Only admins can unmute users.');
+
+  const userId = await getTargetUserId(ctx);
+  if (!userId) return ctx.reply('❌ User not found.');
+
+  try {
+    await ctx.telegram.restrictChatMember(ctx.chat!.id, userId, { permissions: { can_send_messages: true, can_send_media_messages: true, can_send_other_messages: true, can_add_web_page_previews: true } });
+    await ctx.reply(`🔊 ${getUserTag(ctx)} has been *unmuted*.`, { parse_mode: 'Markdown' });
+  } catch {
+    ctx.reply('❌ Failed to unmute user.');
+  }
+};
+
+export const warnUser = () => async (ctx: Context) => {
+  if (!await isAdmin(ctx)) return ctx.reply('❌ Only admins can warn users.');
+
+  const userId = await getTargetUserId(ctx);
+  if (!userId) return ctx.reply('❌ User not found.');
+
+  const key = `${ctx.chat!.id}:${userId}`;
+  warnings[key] = (warnings[key] || 0) + 1;
+
+  await ctx.reply(`⚠️ ${getUserTag(ctx)} has been warned. Warnings: ${warnings[key]}`);
+
+  if (warnings[key] >= 3) {
+    await ctx.telegram.kickChatMember(ctx.chat!.id, userId);
+    await ctx.reply(`⛔ ${getUserTag(ctx)} was *banned* after 3 warnings.`);
+    delete warnings[key];
+  }
+};
+
+export const promoteUser = () => async (ctx: Context) => {
+  if (!await isAdmin(ctx)) return ctx.reply('❌ Only admins can promote users.');
+
+  const userId = await getTargetUserId(ctx);
+  if (!userId) return ctx.reply('❌ User not found.');
+
+  try {
+    await ctx.telegram.promoteChatMember(ctx.chat!.id, userId, { can_change_info: true, can_delete_messages: true, can_invite_users: true, can_restrict_members: true, can_pin_messages: true, can_promote_members: false });
+    await ctx.reply(`⭐ ${getUserTag(ctx)} was *promoted to admin*.`, { parse_mode: 'Markdown' });
+  } catch {
+    ctx.reply('❌ Failed to promote user.');
+  }
+};
+
+export const demoteUser = () => async (ctx: Context) => {
+  if (!await isAdmin(ctx)) return ctx.reply('❌ Only admins can demote users.');
+
+  const userId = await getTargetUserId(ctx);
+  if (!userId) return ctx.reply('❌ User not found.');
+
+  try {
+    await ctx.telegram.promoteChatMember(ctx.chat!.id, userId, { can_change_info: false, can_delete_messages: false, can_invite_users: false, can_restrict_members: false, can_pin_messages: false, can_promote_members: false });
+    await ctx.reply(`⚙️ ${getUserTag(ctx)} was *demoted*.`, { parse_mode: 'Markdown' });
+  } catch {
+    ctx.reply('❌ Failed to demote user.');
+  }
+};
+
+export const userInfo = () => async (ctx: Context) => {
+  const user = ctx.message?.reply_to_message?.from;
+  if (!user) return ctx.reply('❌ Reply to a user to get their info.');
+
+  const info = `👤 *User Info:*\n` + 
+               `ID: \`${user.id}\`\n` +
+               `Username: @${user.username || 'N/A'}\n` +
+               `First Name: ${user.first_name}\n` +
+               `Is Bot: ${user.is_bot ? 'Yes' : 'No'}`;
+
+  ctx.reply(info, { parse_mode: 'Markdown' });
+}; above is src/commands/moderation.ts.... and following is src/commands/me.ts import { Context } from 'telegraf';
+
+export function me() {
+  return async (ctx: Context) => {
+    try {
+      const args = ctx.message?.text?.split(' ').slice(1);
+      const input = args?.[0];
+
+      let targetUser = ctx.from;
+      let userId = ctx.from?.id;
+      let username = ctx.from?.username;
+      let isSelf = true;
+
+      // Handle `/me @username` or `/me userId`
+      if (input) {
+        isSelf = false;
+
+        // Handle user ID
+        if (/^\d+$/.test(input)) {
+          userId = parseInt(input);
+        }
+
+        // Handle username (strip @ if present)
+        if (input.startsWith('@')) {
+          username = input.replace('@', '');
+        }
+      }
+
+      let userData = null;
+      let profilePhotoId = null;
+
+      // Try fetching user profile if it's not self
+      if (!isSelf && userId && !username) {
+        try {
+          const photos = await ctx.telegram.getUserProfilePhotos(userId, 0, 1);
+          if (photos.total_count > 0) {
+            profilePhotoId = photos.photos[0][0].file_id;
+          }
+        } catch (err) {
+          // ignore
+        }
+      }
+
+      // Try fetching from username if available
+      if (!isSelf && username) {
+        try {
+          const userChat = await ctx.telegram.getChat(`@${username}`);
+          userData = userChat;
+          userId = userChat.id;
+          if ('username' in userChat) {
+            username = userChat.username;
+          }
+          if ('first_name' in userChat) {
+            targetUser = userChat;
+          }
+
+          // Get profile photo
+          const photos = await ctx.telegram.getUserProfilePhotos(userChat.id, 0, 1);
+          if (photos.total_count > 0) {
+            profilePhotoId = photos.photos[0][0].file_id;
+          }
+        } catch (err) {
+          return ctx.reply(`❌ Could not fetch details for ${input}. Make sure they have interacted with the bot or are publicly accessible.`);
+        }
+      }
+
+      // Ensure targetUser exists (it might be undefined in case of an invalid user or group)
+      const displayName = `${targetUser?.first_name || ''} ${targetUser?.last_name || ''}`.trim();
+      const mentionLink = username
+        ? `https://t.me/${username}`
+        : `tg://user?id=${userId}`;
+
+      const message = `
+*📇 Telegram User Details:*
+
+👤 *Name:* ${displayName || 'N/A'}
+📛 *Username:* ${username ? '@' + username : 'N/A'}
+🆔 *User ID:* \`${userId}\`
+🔗 *Profile Link:* [Click Here](${mentionLink})
+🤖 *Is Bot:* ${targetUser?.is_bot ? 'Yes' : 'No'}
+
+*💬 From Chat:*
+🗨️ *Chat ID:* \`${ctx.chat?.id || 'N/A'}\`
+🏷️ *Chat Type:* ${ctx.chat?.type || 'N/A'}
+      `.trim();
+
+      // Check if profile photo exists and send it
+      if (profilePhotoId) {
+        await ctx.replyWithPhoto(profilePhotoId, {
+          caption: message,
+          parse_mode: 'Markdown',
+        });
+      } else {
+        await ctx.reply(message, { parse_mode: 'Markdown' });
+      }
+
+    } catch (error) {
+      console.error('Error in /me command:', error);
+      ctx.reply('⚠️ An error occurred while processing your request.');
+    }
+  };
+} and following is quote.ts:  import { Context } from 'telegraf';
+import fetch from 'node-fetch';
+
+interface Quote {
+  quoteText: string;
+  quoteAuthor: string;
+}
+
+export const quote = () => async (ctx: Context) => {
+  try {
+    const res = await fetch('https://raw.githubusercontent.com/itzfew/Eduhub-KMR/master/quotes.json');
+    const quotes: Quote[] = await res.json();
+
+    if (!quotes || quotes.length === 0) {
+      return ctx.reply('❌ No quotes found.');
+    }
+
+    const random = quotes[Math.floor(Math.random() * quotes.length)];
+    const message = `_"${random.quoteText}"_\n\n— *${random.quoteAuthor || 'Unknown'}*`;
+
+    const chatId = ctx.chat?.id;
+    if (!chatId) return;
+
+    await ctx.telegram.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+  } catch (err) {
+    console.error('Failed to fetch quote:', err);
+    const chatId = ctx.chat?.id;
+    if (chatId) {
+      await ctx.telegram.sendMessage(chatId, '⚠️ Failed to fetch quote. Try again later.');
+    }
+  }
+};  and now following is import { Context } from 'telegraf';
+import createDebug from 'debug';
+
+const debug = createDebug('bot:greeting_text');
+
+const greeting = () => async (ctx: Context) => {
+  try {
+    debug('Triggered "greeting" text command');
+
+    const message = ctx.message;
+    if (!message || typeof message.text !== 'string') return;
+
+    const text = message.text.trim().toLowerCase();
+    const user = ctx.from;
+    const userName = `${user?.first_name ?? ''} ${user?.last_name ?? ''}`.trim();
+    const today = new Date().toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+
+    // Ignore pattern-like messages (quiz command formats)
+    if (/^[pbcq][0-9]+$/i.test(text) || /^[pbcq]r$/i.test(text)) return;
+
+    const greetings = ['hi', 'hello', 'hey', 'hii', 'heyy', 'hola', 'start', '/start'];
+
+    if (greetings.includes(text)) {
+      if (text === 'start' || text === '/start') {
+        await ctx.reply(
+          `Dear ${userName}, today is ${today}, welcome to *Eduhub Bot 1.1.0*! 📚\nYour smart companion for NEET & JEE prep.`,
+          { parse_mode: 'Markdown' }
+        );
+
+        await ctx.replyWithMarkdown(`---
+
+To get questions, type:
+
+→ *Biology:* \`bio 1\`, \`/b1\`, or \`biology 1\`  
+→ *Physics:* \`phy 2\`, \`/p2\`, or \`physics 2\`  
+→ *Chemistry:* \`chem 3\`, \`/c3\`, or \`chemistry 3\`
+
+---
+
+*Random Questions:*
+
+→ \`playbio 5\` → 5 random biology questions  
+→ \`playphy 4\` → 4 random physics questions  
+→ \`playchem 6\` → 6 random chemistry questions
+
+---
+
+*Eduhub Features:*
+
+✅ Study materials for NEET and JEE  
+✅ Practice tests & question banks  
+✅ NCERT solutions access  
+✅ Study group links  
+✅ Tools and tips for exam prep
+
+---
+
+*Available Commands:*
+
+• \`/help\` – List of commands  
+• \`/about\` – About this bot  
+• \`/groups\` – Study group links  
+• \`/neet\` – NEET resources  
+• \`/jee\` – JEE resources  
+• \`/study\` – Materials for subjects  
+• \`/quote\` – Get a random motivational quote  
+• \`/me\` – View your user details  
+• \`/users\` – [Admin] Show total and active users  
+
+*Group Admin Tools:*
+• \`/ban <username|reply>\` – Ban a user  
+• \`/unban <username|reply>\` – Unban a user  
+• \`/mute <username|reply>\` – Mute a user  
+• \`/unmute <username|reply>\` – Unmute a user  
+
+---
+
+👨‍💻 *Author:* itzfew  
+📧 *Support:* itzme.eduhub.contact@gmail.com  
+🤖 *Telegram:* @NeetAspirantsBot
+`);
+      } else {
+        const replies = [
+          `Hey dear ${userName}, how may I help you?`,
+          `Hello ${userName}! What can I do for you today?`,
+          `Hi ${userName}, how can I assist you?`,
+          `Greetings ${userName}! Need any help?`,
+          `Hey ${userName}! I’m here to help.`,
+        ];
+        const reply = replies[Math.floor(Math.random() * replies.length)];
+        await ctx.reply(reply);
+        await ctx.reply(`For practice, just send me your topic or need!`);
+      }
+    } else {
+      // fallback reply for unrecognized message
+      await ctx.reply(`Sorry, I didn't understand that. Please check /help for all commands.`);
+    }
+  } catch (err) {
+    console.error('Greeting handler error:', err);
+  }
+};
+
+export { greeting }; src/text/greeting.ts ... update all one by one and give me all without errors as they is following error: [16:13:18.471] Running build in Washington, D.C., USA (East) – iad1
+[16:13:18.485] Cloning github.com/itzfew/Eduhub-Bot (Branch: main, Commit: 6ec3327)
+[16:13:18.685] Previous build caches not available
+[16:13:18.848] Cloning completed: 362.000ms
+[16:13:19.209] Running "vercel build"
+[16:13:19.594] Vercel CLI 41.6.2
+[16:13:20.343] Installing dependencies...
+[16:13:20.712] yarn install v1.22.19
+[16:13:20.775] [1/4] Resolving packages...
+[16:13:20.857] [2/4] Fetching packages...
+[16:13:25.581] [3/4] Linking dependencies...
+[16:13:26.792] [4/4] Building fresh packages...
+[16:13:26.913] Done in 6.21s.
+[16:13:26.933] Running "yarn run build"
+[16:13:27.104] yarn run v1.22.19
+[16:13:27.131] $ ncc build src/index.ts -o public -m
+[16:13:27.371] ncc: Version 0.38.2
+[16:13:27.372] ncc: Compiling file index.js into CJS
+[16:13:28.040] ncc: Using typescript@5.6.3 (local user-provided)
+[16:13:32.844] Error: [tsl] ERROR in /vercel/path0/src/index.ts(133,11)
+[16:13:32.845]       TS2339: Property 'text' does not exist on type 'New & (NonChannel & Message)'.
+[16:13:32.845]   Property 'text' does not exist on type 'New & NonChannel & AnimationMessage'.
+[16:13:32.846] [tsl] ERROR in /vercel/path0/src/index.ts(134,29)
+[16:13:32.846]       TS2339: Property 'text' does not exist on type 'New & (NonChannel & Message)'.
+[16:13:32.846]   Property 'text' does not exist on type 'New & NonChannel & AnimationMessage'.
+[16:13:32.846] [tsl] ERROR in /vercel/path0/src/index.ts(134,72)
+[16:13:32.848]       TS2339: Property 'reply_to_message' does not exist on type 'New & (NonChannel & Message)'.
+[16:13:32.848]   Property 'reply_to_message' does not exist on type 'New & NonChannel & NewChatMembersMessage'.
+[16:13:32.848] [tsl] ERROR in /vercel/path0/src/index.ts(138,39)
+[16:13:32.848]       TS2339: Property 'first_name' does not exist on type 'PrivateChat | GroupChat | SupergroupChat'.
+[16:13:32.849]   Property 'first_name' does not exist on type 'GroupChat'.
+[16:13:32.849] [tsl] ERROR in /vercel/path0/src/index.ts(138,60)
+[16:13:32.849]       TS2339: Property 'username' does not exist on type 'PrivateChat | GroupChat | SupergroupChat'.
+[16:13:32.849]   Property 'username' does not exist on type 'GroupChat'.
+[16:13:32.849] [tsl] ERROR in /vercel/path0/src/index.ts(149,35)
+[16:13:32.850]       TS2339: Property 'reply_to_message' does not exist on type 'New & (NonChannel & Message)'.
+[16:13:32.850]   Property 'reply_to_message' does not exist on type 'New & NonChannel & NewChatMembersMessage'.
+[16:13:32.850] [tsl] ERROR in /vercel/path0/src/index.ts(150,23)
+[16:13:32.850]       TS2339: Property 'reply_to_message' does not exist on type 'New & (NonChannel & Message)'.
+[16:13:32.850]   Property 'reply_to_message' does not exist on type 'New & NonChannel & NewChatMembersMessage'.
+[16:13:32.851] [tsl] ERROR in /vercel/path0/src/index.ts(156,36)
+[16:13:32.851]       TS2339: Property 'text' does not exist on type 'New & (NonChannel & Message)'.
+[16:13:32.851]   Property 'text' does not exist on type 'New & NonChannel & AnimationMessage'.
+[16:13:32.851] [tsl] ERROR in /vercel/path0/src/commands/me.ts(6,33)
+[16:13:32.851]       TS2339: Property 'text' does not exist on type 'New & (NonChannel & Message)'.
+[16:13:32.852]   Property 'text' does not exist on type 'New & NonChannel & AnimationMessage'.
+[16:13:32.852] [tsl] ERROR in /vercel/path0/src/commands/me.ts(54,13)
+[16:13:32.852]       TS2741: Property 'is_bot' is missing in type 'PrivateGetChat' but required in type 'User'.
+[16:13:32.852] [tsl] ERROR in /vercel/path0/src/commands/moderation.ts(15,37)
+[16:13:32.852]       TS2339: Property 'reply_to_message' does not exist on type 'New & (NonChannel & Message)'.
+[16:13:32.853]   Property 'reply_to_message' does not exist on type 'New & NonChannel & NewChatMembersMessage'.
+[16:13:32.853] [tsl] ERROR in /vercel/path0/src/commands/moderation.ts(20,33)
+[16:13:32.853]       TS2339: Property 'text' does not exist on type 'New & (NonChannel & Message)'.
+[16:13:32.853]   Property 'text' does not exist on type 'New & NonChannel & AnimationMessage'.
+[16:13:32.853] [tsl] ERROR in /vercel/path0/src/commands/moderation.ts(33,37)
+[16:13:32.856]       TS2339: Property 'reply_to_message' does not exist on type 'New & (NonChannel & Message)'.
+[16:13:32.856]   Property 'reply_to_message' does not exist on type 'New & NonChannel & NewChatMembersMessage'.
+[16:13:32.856] [tsl] ERROR in /vercel/path0/src/commands/moderation.ts(102,107)
+[16:13:32.857]       TS2561: Object literal may only specify known properties, but 'can_send_media_messages' does not exist in type 'ChatPermissions'. Did you mean to write 'can_send_messages'?
+[16:13:32.857] [tsl] ERROR in /vercel/path0/src/commands/moderation.ts(156,29)
+[16:13:32.857]       TS2339: Property 'reply_to_message' does not exist on type 'New & (NonChannel & Message)'.
+[16:13:32.857]   Property 'reply_to_message' does not exist on type 'New & NonChannel & NewChatMembersMessage'.
+[16:13:32.857] [tsl] ERROR in /vercel/path0/src/commands/pyq.ts(2,19)
+[16:13:32.857]       TS7016: Could not find a declaration file for module 'node-fetch'. '/vercel/path0/node_modules/node-fetch/lib/index.js' implicitly has an 'any' type.
+[16:13:32.858]   Try `npm i --save-dev @types/node-fetch` if it exists or add a new declaration (.d.ts) file containing `declare module 'node-fetch';`
+[16:13:32.858] [tsl] ERROR in /vercel/path0/src/commands/pyq.ts(3,41)
+[16:13:32.858]       TS2307: Cannot find module 'canvas' or its corresponding type declarations.
+[16:13:32.858] [tsl] ERROR in /vercel/path0/src/commands/quote.ts(2,19)
+[16:13:32.858]       TS7016: Could not find a declaration file for module 'node-fetch'. '/vercel/path0/node_modules/node-fetch/lib/index.js' implicitly has an 'any' type.
+[16:13:32.858]   Try `npm i --save-dev @types/node-fetch` if it exists or add a new declaration (.d.ts) file containing `declare module 'node-fetch';`
+[16:13:32.859] [tsl] ERROR in /vercel/path0/src/text/greeting.ts(11,36)
+[16:13:32.859]       TS2339: Property 'text' does not exist on type 'New & (NonChannel & Message)'.
+[16:13:32.859]   Property 'text' does not exist on type 'New & NonChannel & AnimationMessage'.
+[16:13:32.863] [tsl] ERROR in /vercel/path0/src/text/greeting.ts(13,26)
+[16:13:32.863]       TS2339: Property 'text' does not exist on type 'New & (NonChannel & Message)'.
+[16:13:32.863]   Property 'text' does not exist on type 'New & NonChannel & AnimationMessage'.
+[16:13:32.863]     at /vercel/path0/node_modules/@vercel/ncc/dist/ncc/index.js.cache.js:23:2001732
+[16:13:32.863]     at /vercel/path0/node_modules/@vercel/ncc/dist/ncc/index.js.cache.js:23:389111
+[16:13:32.863]     at _done (eval at create (/vercel/path0/node_modules/@vercel/ncc/dist/ncc/index.js.cache.js:21:81694), <anonymous>:9:1)
+[16:13:32.863]     at eval (eval at create (/vercel/path0/node_modules/@vercel/ncc/dist/ncc/index.js.cache.js:21:81694), <anonymous>:34:22)
+[16:13:32.968] error Command failed with exit code 1.
+[16:13:32.969] info Visit https://yarnpkg.com/en/docs/cli/run for documentation about this command.
+[16:13:32.986] Error: Command "yarn run build" exited with 1
+[16:13:33.449] 
