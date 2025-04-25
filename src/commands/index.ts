@@ -4,3 +4,4 @@ export * from './study';
 export * from './neet';
 export * from './jee';
 export * from './groups';
+export * from './quote';
