@@ -1,5 +1,6 @@
 import { Telegraf } from 'telegraf';
 import { VercelRequest, VercelResponse } from '@vercel/node';
+import { getAllChatIds, saveChatId } from './utils/chatStore';
 import { fetchChatIdsFromSheet } from './utils/chatStore';
 import { saveToSheet } from './utils/saveToSheet';
 import { about, help } from './commands';
@@ -9,9 +10,9 @@ import { jee } from './commands/jee';
 import { groups } from './commands/groups';
 import { quizes } from './text';
 import { greeting } from './text';
-import { me } from './commands/me';
 import { development, production } from './core';
 import { isPrivateChat } from './utils/groupSettings';
+import { quote } from './commands/quote';
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ENVIRONMENT = process.env.NODE_ENV || '';
@@ -27,7 +28,7 @@ bot.command('study', study());
 bot.command('neet', neet());
 bot.command('jee', jee());
 bot.command('groups', groups());
-bot.command('me', me());
+bot.command('quote', quote());
 
 // Broadcast to all saved chat IDs
 bot.command('broadcast', async (ctx) => {
@@ -81,10 +82,10 @@ bot.command('reply', async (ctx) => {
 
   try {
     await ctx.telegram.sendMessage(chatId, `*Admin's Reply:*\n${message}`, { parse_mode: 'Markdown' });
-    await ctx.reply(`Reply sent to \`${chatId}\``, { parse_mode: 'Markdown' });
+    await ctx.reply(`Reply sent to ${chatId}`, { parse_mode: 'Markdown' });
   } catch (error) {
     console.error('Reply error:', error);
-    await ctx.reply(`Failed to send reply to \`${chatId}\``, { parse_mode: 'Markdown' });
+    await ctx.reply(`Failed to send reply to ${chatId}`, { parse_mode: 'Markdown' });
   }
 });
 
@@ -99,7 +100,7 @@ bot.start(async (ctx) => {
 // --- MESSAGE HANDLER ---
 bot.on('message', async (ctx) => {
   const chat = ctx.chat;
-  const msg = ctx.message;
+  const msg = ctx.message as { text?: string; reply_to_message?: { text?: string } };
   const chatType = chat.type;
 
   if (!chat?.id) return;
@@ -112,13 +113,47 @@ bot.on('message', async (ctx) => {
 
   // Notify admin once only
   if (chat.id !== ADMIN_ID && !alreadyNotified) {
-    if (chat.type === 'private' && chat.first_name && chat.username) {
+    if (chat.type === 'private' && 'first_name' in chat && 'username' in chat) {
       await ctx.telegram.sendMessage(
         ADMIN_ID,
-        `*New user started the bot!*\n\n*Name:* ${chat.first_name}\n*Username:* @${chat.username}\nChat ID: \`${chat.id}\``,
+        `*New user started the bot!*\n\n*Name:* ${chat.first_name}\n*Username:* @${chat.username}\nChat ID: ${chat.id}`,
         { parse_mode: 'Markdown' }
       );
     }
+  }
+
+  // Handle /contact messages
+  if (msg.text?.startsWith('/contact')) {
+    const userMessage = msg.text.replace('/contact', '').trim() || msg.reply_to_message?.text;
+    if (userMessage) {
+      await ctx.telegram.sendMessage(
+        ADMIN_ID,
+        `*Contact Message from ${'first_name' in chat ? chat.first_name : 'Unknown'} (@${'username' in chat ? chat.username || 'N/A' : 'N/A'})*\nChat ID: ${chat.id}\n\nMessage:\n${userMessage}`,
+        { parse_mode: 'Markdown' }
+      );
+      await ctx.reply('Your message has been sent to the admin!');
+    } else {
+      await ctx.reply('Please provide a message or reply to a message using /contact.');
+    }
+    return;
+  }
+
+  // Admin replies via swipe reply
+  if (chat.id === ADMIN_ID && msg.reply_to_message?.text) {
+    const match = msg.reply_to_message.text.match(/Chat ID: (\d+)/);
+    if (match) {
+      const targetId = parseInt(match[1], 10);
+      try {
+        await ctx.telegram.sendMessage(
+          targetId,
+          `*Admin's Reply:*\n${msg.text}`,
+          { parse_mode: 'Markdown' }
+        );
+      } catch (err) {
+        console.error('Failed to send swipe reply:', err);
+      }
+    }
+    return;
   }
 
   // Run quiz for all chats
