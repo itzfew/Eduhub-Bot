@@ -1,4 +1,4 @@
- import { Context } from 'telegraf';
+import { Context } from 'telegraf';
 import createDebug from 'debug';
 
 const debug = createDebug('bot:greeting_text');
@@ -13,9 +13,7 @@ const greeting = () => async (ctx: Context) => {
 
   const greetings = ['hi', 'hello', 'hey', 'hii', 'heyy', 'hola'];
 
-  // Skip quiz-like commands (p1, c2, qr, etc.)
-  if (/^[pbcq][0-9]+$/i.test(text) || /^[pbcq]r$/i.test(text)) return;
-
+  // Ensure it replies to all messages, including commands
   if (greetings.includes(text)) {
     const replies = [
       `Hey dear ${userName}, how may I help you?`,
