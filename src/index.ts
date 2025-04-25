@@ -10,6 +10,7 @@ import { groups } from './commands/groups';
 import { quizes } from './text';
 import { greeting } from './text';
 import { development, production } from './core';
+import { quote } from './commands/quote';  // Added quote command import
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const ENVIRONMENT = process.env.NODE_ENV || '';
@@ -27,6 +28,7 @@ bot.command('study', study());
 bot.command('neet', neet());
 bot.command('jee', jee());
 bot.command('groups', groups());
+bot.command('quote', quote());  // Added quote command
 
 // Combined message handler to allow both quizes and greeting
 bot.on('message', async (ctx) => {
